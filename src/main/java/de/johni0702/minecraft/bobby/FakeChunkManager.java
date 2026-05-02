@@ -49,6 +49,7 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.Deque;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -65,9 +66,16 @@ public class FakeChunkManager {
     private final ClientWorld world;
     private final ClientChunkManager clientChunkManager;
     private final ClientChunkManagerExt clientChunkManagerExt;
-    private final Worlds worlds;
-    private final FakeChunkStorage storage;
-    private final List<Function<ChunkPos, CompletableFuture<Optional<NbtCompound>>>> storages = new ArrayList<>();
+    private final String serverName;
+    private final long seedHash;
+    private final RegistryKey<World> worldKey;
+    private final Identifier worldId;
+    private final Path serverStoragePath;
+    private volatile Worlds worlds;
+    private volatile FakeChunkStorage storage;
+    private volatile List<Function<ChunkPos, CompletableFuture<Optional<NbtCompound>>>> storages = List.of();
+    private final List<Function<ChunkPos, CompletableFuture<Optional<NbtCompound>>>> fallbackStorages = new ArrayList<>();
+    private String activeStorageKey;
     private int ticksSinceLastSave;
 
     private final Long2ObjectMap<WorldChunk> fakeChunks = Long2ObjectMaps.synchronize(new Long2ObjectOpenHashMap<>());
@@ -102,34 +110,12 @@ public class FakeChunkManager {
         if (serverName.isEmpty()) {
             serverName = "<empty>";
         }
-        long seedHash = ((BiomeAccessAccessor) world.getBiomeAccess()).getSeed();
-        RegistryKey<World> worldKey = world.getRegistryKey();
-        Identifier worldId = worldKey.getValue();
-        Path storagePath = client.runDirectory
-                .toPath()
-                .resolve(".bobby");
-        if (oldFolderExists(storagePath, serverName)) {
-            storagePath = storagePath.resolve(serverName);
-        } else {
-            storagePath = FileSystemUtils.resolveSafeDirectoryName(storagePath, serverName);
-        }
-        storagePath = storagePath
-                .resolve(seedHash + "")
-                .resolve(worldId.getNamespace())
-                .resolve(worldId.getPath());
-
-        if (config.isDynamicMultiWorld()) {
-            worlds = Worlds.getFor(storagePath);
-            worlds.startNewWorld();
-            storages.add(worlds::loadTag);
-
-            storage = null;
-        } else {
-            storage = FakeChunkStorage.getFor(storagePath, true);
-            storages.add(storage::loadTag);
-
-            worlds = null;
-        }
+        this.serverName = serverName;
+        HypixelSkyBlockLocation.trackServer(serverName);
+        seedHash = ((BiomeAccessAccessor) world.getBiomeAccess()).getSeed();
+        worldKey = world.getRegistryKey();
+        worldId = worldKey.getValue();
+        serverStoragePath = getServerStoragePath(serverName);
 
         LevelStorage levelStorage = client.getLevelStorage();
         if (levelStorage.levelExists(FALLBACK_LEVEL_NAME)) {
@@ -137,11 +123,13 @@ public class FakeChunkManager {
                 Path worldDirectory = session.getWorldDirectory(worldKey);
                 Path regionDirectory = worldDirectory.resolve("region");
                 FakeChunkStorage fallbackStorage = FakeChunkStorage.getFor(regionDirectory, false);
-                storages.add(fallbackStorage::loadTag);
+                fallbackStorages.add(fallbackStorage::loadTag);
             } catch (Exception e) {
                 e.printStackTrace();
             }
         }
+
+        refreshStorage(config);
     }
 
     private static boolean oldFolderExists(Path bobbyFolder, String name) {
@@ -150,6 +138,83 @@ public class FakeChunkManager {
         } catch (InvalidPathException e) {
             return false;
         }
+    }
+
+    private static Path getServerStoragePath(String serverName) {
+        Path storagePath = client.runDirectory
+                .toPath()
+                .resolve(".bobby");
+        if (oldFolderExists(storagePath, serverName)) {
+            return storagePath.resolve(serverName);
+        }
+        return FileSystemUtils.resolveSafeDirectoryName(storagePath, serverName);
+    }
+
+    private Path getWorldStoragePath(HypixelSkyBlockLocation.StorageKey storageKey) {
+        Path storagePath = serverStoragePath;
+        for (String segment : storageKey.segments()) {
+            storagePath = FileSystemUtils.resolveSafeDirectoryName(storagePath, segment);
+        }
+        return storagePath
+                .resolve(seedHash + "")
+                .resolve(worldId.getNamespace())
+                .resolve(worldId.getPath());
+    }
+
+    private boolean refreshStorage(BobbyConfig config) {
+        HypixelSkyBlockLocation.StorageKey storageKey = HypixelSkyBlockLocation.getStorageKey(serverName);
+        if (storageKey.waiting()) {
+            if (!Objects.equals(activeStorageKey, storageKey.id())) {
+                resetLocalState();
+                worlds = null;
+                storage = null;
+                storages = List.of();
+                activeStorageKey = storageKey.id();
+            }
+            return false;
+        }
+
+        String newStorageKey = storageKey.id();
+        if (Objects.equals(activeStorageKey, newStorageKey)) {
+            return true;
+        }
+
+        resetLocalState();
+        Path storagePath = getWorldStoragePath(storageKey);
+        List<Function<ChunkPos, CompletableFuture<Optional<NbtCompound>>>> newStorages = new ArrayList<>();
+
+        if (config.isDynamicMultiWorld()) {
+            Worlds newWorlds = Worlds.getFor(storagePath);
+            newWorlds.startNewWorld();
+            worlds = newWorlds;
+            storage = null;
+            newStorages.add(newWorlds::loadTag);
+        } else {
+            FakeChunkStorage newStorage = FakeChunkStorage.getFor(storagePath, true);
+            storage = newStorage;
+            worlds = null;
+            newStorages.add(newStorage::loadTag);
+        }
+
+        newStorages.addAll(fallbackStorages);
+        storages = List.copyOf(newStorages);
+        activeStorageKey = newStorageKey;
+        return true;
+    }
+
+    private void resetLocalState() {
+        loadingJobs.values().forEach(job -> job.cancelled = true);
+        loadingJobs.clear();
+        fingerprintJobs.values().forEach(job -> job.cancelled = true);
+        fingerprintJobs.clear();
+        toBeUnloaded.clear();
+        unloadQueue.clear();
+
+        long[] loadedChunks = fakeChunks.keySet().toLongArray();
+        for (long chunkPos : loadedChunks) {
+            unload(ChunkPos.getPackedX(chunkPos), ChunkPos.getPackedZ(chunkPos), false);
+        }
+        chunkTracker.reset();
     }
 
     public WorldChunk getChunk(int x, int z) {
@@ -169,10 +234,21 @@ public class FakeChunkManager {
     }
 
     private void update(boolean blocking, BooleanSupplier shouldKeepTicking, int newViewDistance) {
+        BobbyConfig config = Bobby.getInstance().getConfig();
+        if (!refreshStorage(config)) {
+            return;
+        }
+
         // Once a minute, force chunks to disk
         if (++ticksSinceLastSave > 20 * 60) {
             // completeAll is blocking, so we run it on the io pool
-            Util.getIoWorkerExecutor().execute(worlds != null ? worlds::saveAll : storage::completeAll);
+            Worlds worlds = this.worlds;
+            FakeChunkStorage storage = this.storage;
+            if (worlds != null) {
+                Util.getIoWorkerExecutor().execute(worlds::saveAll);
+            } else if (storage != null) {
+                Util.getIoWorkerExecutor().execute(storage::completeAll);
+            }
 
             ticksSinceLastSave = 0;
         }
@@ -182,7 +258,6 @@ public class FakeChunkManager {
             return;
         }
 
-        BobbyConfig config = Bobby.getInstance().getConfig();
         long time = Util.getMeasuringTimeMs();
 
         List<LoadingJob> newJobs = new ArrayList<>();
@@ -331,6 +406,7 @@ public class FakeChunkManager {
             }
         }
 
+        Worlds worlds = this.worlds;
         if (worlds != null) {
             boolean didMerge = worlds.update();
             if (didMerge) {
@@ -352,16 +428,19 @@ public class FakeChunkManager {
     }
 
     private CompletableFuture<Optional<NbtCompound>> loadTag(int x, int z) {
-        return loadTag(new ChunkPos(x, z), 0);
+        return loadTag(new ChunkPos(x, z), 0, storages);
     }
 
-    private CompletableFuture<Optional<NbtCompound>> loadTag(ChunkPos chunkPos, int storageIndex) {
+    private CompletableFuture<Optional<NbtCompound>> loadTag(ChunkPos chunkPos, int storageIndex, List<Function<ChunkPos, CompletableFuture<Optional<NbtCompound>>>> storages) {
+        if (storageIndex >= storages.size()) {
+            return CompletableFuture.completedFuture(Optional.empty());
+        }
         return storages.get(storageIndex).apply(chunkPos).thenCompose(maybeTag -> {
             if (maybeTag.isPresent()) {
                 return CompletableFuture.completedFuture(maybeTag);
             }
             if (storageIndex + 1 < storages.size()) {
-                return loadTag(chunkPos, storageIndex + 1);
+                return loadTag(chunkPos, storageIndex + 1, storages);
             }
             return CompletableFuture.completedFuture(Optional.empty());
         });
@@ -455,12 +534,15 @@ public class FakeChunkManager {
         Pair<WorldChunk, Supplier<WorldChunk>> copy = ChunkSerializer.shallowCopy(chunk);
         fingerprint(copy.getLeft());
         LightingProvider lightingProvider = chunk.getWorld().getLightingProvider();
+        Worlds worlds = this.worlds;
         FakeChunkStorage storage = worlds != null ? worlds.getCurrentStorage() : this.storage;
-        saveExecutor.execute(() -> {
-            NbtCompound nbt = ChunkSerializer.serialize(copy.getLeft(), lightingProvider);
-            nbt.putLong("age", System.currentTimeMillis()); // fallback in case meta gets corrupted
-            storage.save(chunk.getPos(), nbt);
-        });
+        if (storage != null) {
+            saveExecutor.execute(() -> {
+                NbtCompound nbt = ChunkSerializer.serialize(copy.getLeft(), lightingProvider);
+                nbt.putLong("age", System.currentTimeMillis()); // fallback in case meta gets corrupted
+                storage.save(chunk.getPos(), nbt);
+            });
+        }
         return copy.getRight();
     }
 

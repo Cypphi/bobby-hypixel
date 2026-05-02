@@ -46,6 +46,7 @@ dependencies {
 
 	modImplementation(include(fabricApi.module("fabric-api-base", fabricApiVersion))!!)
 	modImplementation(include(fabricApi.module("fabric-command-api-v2", fabricApiVersion))!!)
+	modImplementation(include(fabricApi.module("fabric-message-api-v1", fabricApiVersion))!!)
 
 	// we don't need the full thing but our deps pull in an outdated one
 	modImplementation("net.fabricmc.fabric-api:fabric-api:$fabricApiVersion")

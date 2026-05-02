@@ -65,6 +65,8 @@ public class Bobby implements ClientModInitializer {
             e.printStackTrace();
         }
 
+        HypixelSkyBlockLocation.init();
+
         ClientCommandRegistrationCallback.EVENT.register(((dispatcher, registryAccess) ->
                 dispatcher.register(literal("bobby")
                         .then(literal("worlds").executes(new WorldsCommand(false))
@@ -112,9 +114,10 @@ public class Bobby implements ClientModInitializer {
         Path basePath = client.runDirectory.toPath().resolve(".bobby");
 
         List<Path> toBeDeleted;
-        try (Stream<Path> stream = Files.walk(basePath, 4)) {
+        try (Stream<Path> stream = Files.walk(basePath, 10)) {
             toBeDeleted = stream
-                    .filter(it -> basePath.relativize(it).getNameCount() == 4)
+                    .filter(Files::isDirectory)
+                    .filter(directory -> isStorageDirectory(basePath, directory))
                     .flatMap(directory -> {
                         try {
                             List<Path> toDelete = new ArrayList<>();
@@ -171,6 +174,24 @@ public class Bobby implements ClientModInitializer {
                 LOGGER.error("Failed to delete " + path + ":", e);
             }
         }
+    }
+
+    private static boolean isStorageDirectory(Path basePath, Path directory) {
+        if (directory.equals(basePath)) {
+            return false;
+        }
+        if (!Files.exists(Worlds.metaFile(directory)) && !Files.exists(directory.resolve("last_access"))) {
+            return false;
+        }
+
+        Path parent = directory.getParent();
+        while (parent != null && !parent.equals(basePath)) {
+            if (Files.exists(Worlds.metaFile(parent)) || Files.exists(parent.resolve("last_access"))) {
+                return false;
+            }
+            parent = parent.getParent();
+        }
+        return true;
     }
 
     private static void deleteParentsIfEmpty(Path path) throws IOException {

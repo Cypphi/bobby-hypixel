@@ -2,6 +2,7 @@ package de.johni0702.minecraft.bobby.mixin;
 
 import de.johni0702.minecraft.bobby.FakeChunkManager;
 import de.johni0702.minecraft.bobby.FakeChunkStorage;
+import de.johni0702.minecraft.bobby.HypixelSkyBlockLocation;
 import de.johni0702.minecraft.bobby.Worlds;
 import de.johni0702.minecraft.bobby.ext.ClientChunkManagerExt;
 import net.minecraft.client.MinecraftClient;
@@ -27,6 +28,9 @@ public abstract class MinecraftClientMixin {
 
     @Inject(method = "render", at = @At(value = "CONSTANT", args = "stringValue=tick"))
     private void bobbyUpdate(CallbackInfo ci) {
+        MinecraftClient client = (MinecraftClient) (Object) this;
+        HypixelSkyBlockLocation.tick(client);
+
         if (world == null) {
             return;
         }
