@@ -1,5 +1,5 @@
 plugins {
-	id("fabric-loom") version "1.11.8"
+	id("fabric-loom") version "1.16.1"
 	id("maven-publish")
 	id("com.github.breadmoirai.github-release") version "2.2.12"
 	id("com.matthewprenger.cursegradle") version "1.4.0"
@@ -19,10 +19,8 @@ version = "$modVersion+mc$minecraftVersion"
 
 sourceSets {
 	val main = main.get()
-	loom.mixin.add(main, "bobby.refmap.json")
 	create("sodium06") {
 		loom.createRemapConfigurations(this)
-		loom.mixin.add(this, "bobby-sodium06-compat.refmap.json")
 		compileClasspath += main.compileClasspath
 		compileClasspath += main.output
 		main.runtimeClasspath += output
@@ -68,12 +66,14 @@ dependencies {
 
 tasks.processResources {
 	inputs.property("version", project.version)
+	inputs.property("minecraftVersion", minecraftVersion)
 	inputs.property("clothConfigVersion", clothConfigVersion)
 	inputs.property("modMenuVersion", modMenuVersion)
 
 	filesMatching("fabric.mod.json") {
 		expand(mutableMapOf(
 				"version" to project.version,
+				"minecraftVersion" to minecraftVersion,
 				"clothConfigVersion" to clothConfigVersion,
 				"modMenuVersion" to modMenuVersion
 		))
@@ -92,7 +92,7 @@ tasks.withType<AbstractArchiveTask> {
 }
 
 tasks.jar {
-	from("LICENSE.md")
+	from(rootProject.file("LICENSE.md"))
 }
 
 publishing {
@@ -122,7 +122,7 @@ repositories {
 }
 
 fun readChangelog(): String {
-	val lines = project.file("CHANGELOG.md").readText().lineSequence().iterator()
+	val lines = rootProject.file("CHANGELOG.md").readText().lineSequence().iterator()
 	if (lines.next() != "### $modVersion") {
 		throw GradleException("CHANGELOG.md did not start with expected version!")
 	}

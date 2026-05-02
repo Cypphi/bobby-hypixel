@@ -5,6 +5,8 @@ import de.johni0702.minecraft.bobby.util.RegionPos;
 import io.netty.util.concurrent.DefaultThreadFactory;
 import net.minecraft.SharedConstants;
 import net.minecraft.client.MinecraftClient;
+//? if >=1.21.11
+/*import net.minecraft.datafixer.DataFixTypes;*/
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.RegistryKey;
@@ -77,6 +79,8 @@ public class FakeChunkStorage extends VersionedChunkStorage {
                 directory,
                 MinecraftClient.getInstance().getDataFixer(),
                 false
+                //? if >=1.21.11
+                /*, DataFixTypes.CHUNK*/
         );
 
         this.directory = directory;
@@ -117,7 +121,17 @@ public class FakeChunkStorage extends VersionedChunkStorage {
         if (lastAccess != null) {
             lastAccess.touchRegion(pos.getRegionX(), pos.getRegionZ());
         }
+        //? if >=1.21.11 {
+        /*setNbt(pos, chunk);
+        *///?} else
         setNbt(pos, () -> chunk);
+    }
+
+    public void completeAllBlocking() {
+        //? if >=1.21.11 {
+        /*completeAll(true).join();
+        *///?} else
+        completeAll();
     }
 
     public CompletableFuture<Optional<NbtCompound>> loadTag(ChunkPos pos) {
@@ -189,6 +203,12 @@ public class FakeChunkStorage extends VersionedChunkStorage {
                     // from chunks that don't have this set, so we need to set it before we upgrade the chunk.
                     nbt.putBoolean("isLightOn", true);
 
+                    //? if >=1.21.11 {
+                    /*NbtCompound context = new NbtCompound();
+                    context.putString("dimension", worldKey.getValue().toString());
+                    generatorKey.ifPresent(key -> context.putString("generator", key.getValue().toString()));
+                    nbt = updateChunkNbt(nbt, -1, context);
+                    *///?} else
                     nbt = updateChunkNbt(worldKey, null, nbt, generatorKey);
 
                     io.setResult(chunkPos, nbt).join();

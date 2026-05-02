@@ -62,6 +62,15 @@ public abstract class GameRendererMixin implements GameRendererExt {
         return skyFogRenderer;
     }
 
+    //? if >=1.21.11 {
+    /*@WrapOperation(method = "renderWorld", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/render/fog/FogRenderer;applyFog(Lnet/minecraft/client/render/Camera;ILnet/minecraft/client/render/RenderTickCounter;FLnet/minecraft/client/world/ClientWorld;)Lorg/joml/Vector4f;"))
+    private Vector4f updateSkyFogRenderer(FogRenderer instance, Camera camera, int viewDistance, RenderTickCounter tickCounter, float skyDarkness, ClientWorld world, Operation<Vector4f> operation) {
+        if (viewDistance >= 32) {
+            skyFogRenderer.applyFog(camera, 32, tickCounter, skyDarkness, world);
+        }
+        return operation.call(instance, camera, viewDistance, tickCounter, skyDarkness, world);
+    }
+    *///?} else {
     @WrapOperation(method = "renderWorld", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/render/fog/FogRenderer;applyFog(Lnet/minecraft/client/render/Camera;IZLnet/minecraft/client/render/RenderTickCounter;FLnet/minecraft/client/world/ClientWorld;)Lorg/joml/Vector4f;"))
     private Vector4f updateSkyFogRenderer(FogRenderer instance, Camera camera, int viewDistance, boolean thick, RenderTickCounter tickCounter, float skyDarkness, ClientWorld world, Operation<Vector4f> operation) {
         if (viewDistance >= 32) {
@@ -69,6 +78,7 @@ public abstract class GameRendererMixin implements GameRendererExt {
         }
         return operation.call(instance, camera, viewDistance, thick, tickCounter, skyDarkness, world);
     }
+    //?}
 
     @Inject(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/render/fog/FogRenderer;rotate()V"))
     private void rotateSkyFogRenderer(CallbackInfo ci) {

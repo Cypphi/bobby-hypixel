@@ -330,7 +330,7 @@ public class Worlds implements AutoCloseable {
             lock.readLock().unlock();
         }
         for (World world : worlds) {
-            world.storage.completeAll();
+            world.storage.completeAllBlocking();
         }
     }
 
@@ -528,7 +528,7 @@ public class Worlds implements AutoCloseable {
                 case BlockedByPreviouslyQueuedWrites -> {
                     state.stage = MergeStage.WaitForPreviouslyQueuedWrites;
                     Util.getIoWorkerExecutor().execute(() -> {
-                        sourceWorld.storage.completeAll();
+                        sourceWorld.storage.completeAllBlocking();
                         state.stage = MergeStage.Idle;
                     });
                 }
@@ -634,7 +634,7 @@ public class Worlds implements AutoCloseable {
                     if (state.activeJobs.isEmpty()) {
                         state.stage = MergeStage.Syncing;
                         Util.getIoWorkerExecutor().execute(() -> {
-                            targetWorld.storage.completeAll();
+                            targetWorld.storage.completeAllBlocking();
                             state.stage = MergeStage.WriteTargetMeta;
                         });
                     } else {

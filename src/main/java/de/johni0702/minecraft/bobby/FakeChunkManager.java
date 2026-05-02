@@ -247,7 +247,7 @@ public class FakeChunkManager {
             if (worlds != null) {
                 Util.getIoWorkerExecutor().execute(worlds::saveAll);
             } else if (storage != null) {
-                Util.getIoWorkerExecutor().execute(storage::completeAll);
+                Util.getIoWorkerExecutor().execute(storage::completeAllBlocking);
             }
 
             ticksSinceLastSave = 0;
